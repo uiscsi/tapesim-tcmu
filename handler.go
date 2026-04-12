@@ -299,6 +299,21 @@ func (h *TapeHandler) handleRead(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, error) {
 	if _, err := cmd.Write(buf[:n]); err != nil {
 		return cmd.MediumError(), nil
 	}
+	// Variable-block short read: generate ILI with residual so the initiator
+	// can determine the actual record size through the SCSI sense path.
+	if !fixed && n < byteCount {
+		residue := uint32(byteCount - n)
+		if sili {
+			return cmd.Ok(), nil
+		}
+		iliSense := &tapesim.SenseInfo{
+			Key:         0x00,
+			ILI:         true,
+			Information: residue,
+			Valid:       true,
+		}
+		return cmd.RespondSenseData(0x02, tapesim.EncodeFixedSense(iliSense)), nil
+	}
 	return cmd.Ok(), nil
 }
 
@@ -361,7 +376,7 @@ func (h *TapeHandler) handleModeSense6(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, er
 			page[2] |= 0x80 // DCE bit 7
 		}
 		if dde {
-			page[3] |= 0x80 // DDE bit 7
+			page[2] |= 0x40 // DDE bit 6 (same byte as DCE per SSC-3)
 		}
 		resp = append(resp, page...)
 	}
@@ -425,12 +440,9 @@ func (h *TapeHandler) handleModeSelect6(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, e
 			break
 		}
 		if pc == 0x0F && pageLen >= 2 {
-			// Compression page.
+			// Compression page: DCE=byte2 bit 7, DDE=byte2 bit 6 (SSC-3).
 			dce := buf[offset+2]&0x80 != 0
-			dde := false
-			if pageLen >= 3 {
-				dde = buf[offset+3]&0x80 != 0
-			}
+			dde := buf[offset+2]&0x40 != 0
 			h.media.SetCompression(dce, dde)
 		}
 		offset += 2 + pageLen

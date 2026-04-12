@@ -872,9 +872,9 @@ func TestModeSense6_Compression_DCE_DDE(t *testing.T) {
 	if dataBuf[14]&0x80 == 0 {
 		t.Fatalf("expected DCE bit (byte 14 bit 7) set, byte 14 = 0x%02x", dataBuf[14])
 	}
-	// byte 15: compression page data byte 3 (offset 12+3=15), DDE = bit 7
-	if dataBuf[15]&0x80 == 0 {
-		t.Fatalf("expected DDE bit (byte 15 bit 7) set, byte 15 = 0x%02x", dataBuf[15])
+	// byte 14: compression page data byte 2, DDE = bit 6 (same byte as DCE per SSC-3)
+	if dataBuf[14]&0x40 == 0 {
+		t.Fatalf("expected DDE bit (byte 14 bit 6) set, byte 14 = 0x%02x", dataBuf[14])
 	}
 }
 
@@ -913,11 +913,11 @@ func TestModeSelect6_Compression(t *testing.T) {
 	h := NewTapeHandler(media)
 
 	// Parameter: 4-byte header (no BD) + compression page.
-	// Page 0x0F, length 0x0E (14 bytes), DCE=1 (byte 2 bit 7), DDE=1 (byte 3 bit 7).
+	// Page 0x0F, length 0x0E (14 bytes), DCE=bit 7, DDE=bit 6 (same byte per SSC-3).
 	paramData := []byte{
 		0x00, 0x00, 0x00, 0x00, // header: bdLen=0
 		0x0F, 0x0E,             // page code and length
-		0x80, 0x80,             // DCE bit 7, DDE bit 7
+		0xC0, 0x00,             // DCE bit 7 + DDE bit 6
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 12 reserved bytes = 14 total page data
 	}
 
