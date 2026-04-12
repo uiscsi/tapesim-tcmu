@@ -1,0 +1,8 @@
+github.com/uiscsi/go-tcmu v0.1.0 h1:TDUqfBkFhEOCjs4lgwLq4xihUPwp5gNg0axnNlAZoQM=
+github.com/uiscsi/go-tcmu v0.1.0/go.mod h1:+cmC2TM9UhPtPakZ2MVLz/esyNH0ODmcDGblNwps2MU=
+github.com/uiscsi/tapesim v0.2.0 h1:LVwNhMo+cKtm8A6arjTiOCbnHujzXm3h5hq0wQVUnkI=
+github.com/uiscsi/tapesim v0.2.0/go.mod h1:9YdKxLPMIX+D6ZkkQjK3r2Zi6io/ON9Ku5zLmnStDNU=
+go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+golang.org/x/sys v0.36.0 h1:KVRy2GtZBrk1cBYA7MKu5bEZFxQk4NIDV6RLVcC8o0k=
+golang.org/x/sys v0.36.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
