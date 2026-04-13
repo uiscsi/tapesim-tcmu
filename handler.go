@@ -82,7 +82,7 @@ func NewTapeDevReady(media *tapesim.Media, opts ...HandlerOption) tcmu.DevReadyF
 // command's opcode, it is consumed and returned as CHECK CONDITION before any
 // command logic runs.
 func (h *TapeHandler) HandleCommand(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, error) {
-	if s := h.media.ConsumeInjectedError(cmd.GetCDB(0)); s != nil {
+	if s, ok := h.media.ConsumeInjectedError(cmd.GetCDB(0)); ok && s != nil {
 		return cmd.RespondSenseData(0x02, tapesim.EncodeFixedSense(s)), nil
 	}
 	switch cmd.Command() {
@@ -256,6 +256,10 @@ func (h *TapeHandler) handleWrite(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, error) 
 //   - flags bit 1: SILI=1 (Suppress Incorrect Length Indicator)
 //   - count: same as WRITE(6)
 //
+// In variable-block mode, [tapesim.Media.Read] returns exactly one record per
+// call with ILI sense when the buffer size does not match the record size.
+// This handler forwards that sense directly without generating additional ILI.
+//
 // Data-before-sense: when a short read returns partial data (n>0) alongside
 // ILI or FM sense, the partial data is written via cmd.Write BEFORE returning
 // CHECK CONDITION (Pitfall 2).
@@ -298,21 +302,6 @@ func (h *TapeHandler) handleRead(cmd *tcmu.SCSICmd) (tcmu.SCSIResponse, error) {
 	}
 	if _, err := cmd.Write(buf[:n]); err != nil {
 		return cmd.MediumError(), nil
-	}
-	// Variable-block short read: generate ILI with residual so the initiator
-	// can determine the actual record size through the SCSI sense path.
-	if !fixed && n < byteCount {
-		residue := uint32(byteCount - n)
-		if sili {
-			return cmd.Ok(), nil
-		}
-		iliSense := &tapesim.SenseInfo{
-			Key:         0x00,
-			ILI:         true,
-			Information: residue,
-			Valid:       true,
-		}
-		return cmd.RespondSenseData(0x02, tapesim.EncodeFixedSense(iliSense)), nil
 	}
 	return cmd.Ok(), nil
 }

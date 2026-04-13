@@ -563,6 +563,80 @@ func TestRead_SILI(t *testing.T) {
 	}
 }
 
+// TestHandleRead_VariableBlock_RecordBoundary verifies that READ(6) in variable-block
+// mode returns exactly one record per call, with ILI sense and correct residue
+// when the buffer is larger than the record.
+func TestHandleRead_VariableBlock_RecordBoundary(t *testing.T) {
+	media := tapesim.NewMedia(1024 * 1024)
+	h := NewTapeHandler(media)
+
+	// Write two records of different sizes.
+	rec1 := make([]byte, 100)
+	rec2 := make([]byte, 200)
+	for i := range rec1 {
+		rec1[i] = byte(i & 0xFF)
+	}
+	for i := range rec2 {
+		rec2[i] = byte((i + 1) & 0xFF)
+	}
+	if _, s := media.Write(rec1, false); s != nil {
+		t.Fatalf("test setup: media.Write rec1: %v", s)
+	}
+	if _, s := media.Write(rec2, false); s != nil {
+		t.Fatalf("test setup: media.Write rec2: %v", s)
+	}
+	rewindMedia(t, h)
+
+	// First read with 4096-byte buffer: should return only first record (100 bytes)
+	// with ILI sense and residue = 4096 - 100 = 3996.
+	{
+		cmd, buf := readCmd(4096, false, false)
+		resp, err := h.HandleCommand(cmd)
+		mustCheckCondition(t, resp, err)
+
+		sense := resp.SenseBuffer()
+		if len(sense) < 7 {
+			t.Fatalf("sense buffer too short: %d", len(sense))
+		}
+		// ILI bit (bit 5 of byte 2).
+		if sense[2]&0x20 == 0 {
+			t.Fatalf("expected ILI bit set in first read, byte 2 = 0x%02x", sense[2])
+		}
+		residue := uint32(sense[3])<<24 | uint32(sense[4])<<16 | uint32(sense[5])<<8 | uint32(sense[6])
+		if residue != 3996 {
+			t.Fatalf("expected residue 3996 in first read, got %d", residue)
+		}
+		// Data from first record must be present.
+		if string(buf[:100]) != string(rec1) {
+			t.Fatalf("first read data mismatch")
+		}
+	}
+
+	// Second read with 4096-byte buffer: should return only second record (200 bytes)
+	// with ILI sense and residue = 4096 - 200 = 3896.
+	{
+		cmd, buf := readCmd(4096, false, false)
+		resp, err := h.HandleCommand(cmd)
+		mustCheckCondition(t, resp, err)
+
+		sense := resp.SenseBuffer()
+		if len(sense) < 7 {
+			t.Fatalf("sense buffer too short: %d", len(sense))
+		}
+		if sense[2]&0x20 == 0 {
+			t.Fatalf("expected ILI bit set in second read, byte 2 = 0x%02x", sense[2])
+		}
+		residue := uint32(sense[3])<<24 | uint32(sense[4])<<16 | uint32(sense[5])<<8 | uint32(sense[6])
+		if residue != 3896 {
+			t.Fatalf("expected residue 3896 in second read, got %d", residue)
+		}
+		// Data from second record must be present.
+		if string(buf[:200]) != string(rec2) {
+			t.Fatalf("second read data mismatch")
+		}
+	}
+}
+
 // TestRead_Filemark verifies that READ(6) returns FM sense (byte 2 bit 7) when
 // hitting a filemark. The data before the filemark is returned as GOOD.
 func TestRead_Filemark(t *testing.T) {
@@ -640,28 +714,35 @@ func TestWriteFilemarks(t *testing.T) {
 }
 
 // TestSpace_Blocks verifies that SPACE(6) with code=0 (blocks) advances the
-// position by count blocks in variable mode.
+// position by count records in variable mode (record-level spacing per SSC-3).
 func TestSpace_Blocks(t *testing.T) {
 	media := tapesim.NewMedia(1024 * 1024)
 	h := NewTapeHandler(media)
 
-	// Write 100 bytes to advance written marker.
-	data := make([]byte, 100)
-	if _, s := media.Write(data, false); s != nil {
+	// Write three separate 50-byte records in variable mode.
+	rec := make([]byte, 50)
+	if _, s := media.Write(rec, false); s != nil {
+		t.Fatalf("test setup: media.Write: %v", s)
+	}
+	if _, s := media.Write(rec, false); s != nil {
+		t.Fatalf("test setup: media.Write: %v", s)
+	}
+	if _, s := media.Write(rec, false); s != nil {
 		t.Fatalf("test setup: media.Write: %v", s)
 	}
 
-	// Rewind then SPACE forward 50 blocks (variable mode: 50 bytes).
+	// Rewind then SPACE forward 1 block (variable mode: advance past 1 record).
 	rewindMedia(t, h)
 
-	// CDB: opcode=0x11, code=0 (blocks), count=50
-	cdb := []byte{0x11, 0x00, 0, 0, 50, 0}
+	// CDB: opcode=0x11, code=0 (blocks), count=1
+	cdb := []byte{0x11, 0x00, 0, 0, 1, 0}
 	cmd := tcmu.NewTestSCSICmd(cdb, nil, 96)
 	resp, err := h.HandleCommand(cmd)
 	mustOk(t, resp, err)
 
+	// After spacing 1 block, position should be at end of first record (50).
 	if media.Position() != 50 {
-		t.Fatalf("expected position 50 after space 50 blocks, got %d", media.Position())
+		t.Fatalf("expected position 50 after space 1 block, got %d", media.Position())
 	}
 }
 
@@ -723,31 +804,36 @@ func TestSpace_EndOfData(t *testing.T) {
 }
 
 // TestSpace_Backward verifies that SPACE(6) with a negative count moves
-// the tape backward (clamped at beginning of tape).
+// the tape backward by records in variable mode (record-level spacing per SSC-3).
 func TestSpace_Backward(t *testing.T) {
 	media := tapesim.NewMedia(1024 * 1024)
 	h := NewTapeHandler(media)
 
-	// Write 100 bytes.
-	data := make([]byte, 100)
-	if _, s := media.Write(data, false); s != nil {
+	// Write three separate 50-byte records in variable mode.
+	rec := make([]byte, 50)
+	if _, s := media.Write(rec, false); s != nil {
 		t.Fatalf("test setup: media.Write: %v", s)
 	}
+	if _, s := media.Write(rec, false); s != nil {
+		t.Fatalf("test setup: media.Write: %v", s)
+	}
+	if _, s := media.Write(rec, false); s != nil {
+		t.Fatalf("test setup: media.Write: %v", s)
+	}
+	// Position is now 150 (3 records of 50 bytes each).
 
-	// SPACE backward 50 blocks from position 100 (variable mode: step=1).
-	// -50 in 24-bit two's complement: 0xFFFFCE
-	cdb := []byte{0x11, 0x00, 0xFF, 0xFF, 0xCE, 0}
+	// SPACE backward 1 block: moves to start of record 2 (offset 100).
+	// -1 in 24-bit two's complement: 0xFFFFFF
+	cdb := []byte{0x11, 0x00, 0xFF, 0xFF, 0xFF, 0}
 	cmd := tcmu.NewTestSCSICmd(cdb, nil, 96)
 	resp, err := h.HandleCommand(cmd)
-	// Backward spacing may return BOP sense or Ok depending on how far we go.
-	// Here 100-50=50, which is valid (no BOP), so expect Ok.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	_ = resp // either Ok or a BOP sense is acceptable; verify position
 
-	if media.Position() != 50 {
-		t.Fatalf("expected position 50 after backward space, got %d", media.Position())
+	if media.Position() != 100 {
+		t.Fatalf("expected position 100 after backward space 1 block, got %d", media.Position())
 	}
 }
 
